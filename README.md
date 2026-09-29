@@ -59,7 +59,7 @@ misapplied or why a service keeps failing — synthesis that no single retrieved
 - After a new post-mortem is retained, the same alert immediately cites it.
 
 ## Architecture
-
+![Architecture](docs/architecture.png)
 ```mermaid
 flowchart LR
     U[On-call engineer] --> UI[Streamlit UI<br/>Triage · Resolve & Learn · Patterns<br/>Memory trace sidebar]

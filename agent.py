@@ -58,3 +58,12 @@ def resolve(free_text: str, step_feedback: Optional[List[Dict]] = None,
 def patterns(question: str) -> str:
     """Reasoning over accumulated incident memory (Hindsight reflect)."""
     return memory.reflect(question)
+def followup(question: str, alert: str, plan: Dict, mems: List[Dict], history: List[Dict]) -> str:
+    """Conversational follow-up grounded in the recalled memories and the current plan."""
+    system = ("You are the on-call incident agent. Answer the engineer's follow-up question using ONLY the "
+              "alert, the recalled Hindsight memories and the plan below. Cite incident IDs. If the memories "
+              "don't contain the answer, say so plainly and suggest what to check. Be concise.")
+    convo = "\n".join(f"{h['role']}: {h['content']}" for h in history[-6:])
+    user = (f"ALERT:\n{alert}\n\nRECALLED MEMORIES:\n{_format_memories(mems)}\n\n"
+            f"CURRENT PLAN:\n{plan}\n\nCONVERSATION SO FAR:\n{convo}\n\nENGINEER: {question}")
+    return llm.chat(system, user, temperature=0.2)
