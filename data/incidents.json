@@ -1,0 +1,112 @@
+[
+  {
+    "id": "INC-017", "date": "2025-03-14", "severity": "SEV-2", "service": "payment-service",
+    "title": "502s on /checkout after deploy v2.31",
+    "symptoms": "Alert 'PaymentService 5xx rate > 5%'. 502 errors on POST /checkout. Logs: 'FATAL: remaining connection slots are reserved for non-replication superuser connections' from Postgres payments-db.",
+    "root_cause": "Deploy v2.31 doubled gunicorn workers from 4 to 8 per pod but DB_POOL_MAX stayed at 20, exhausting the Postgres connection limit (max_connections=100).",
+    "resolution_steps": ["Confirm exhaustion: SELECT count(*) FROM pg_stat_activity WHERE datname='payments'", "Set DB_POOL_MAX=60 in payment-service ConfigMap", "kubectl rollout restart deploy/payment-service", "Verify 5xx rate < 0.5% in Grafana dashboard 'payments-overview'"],
+    "runbook": "RB-DB-POOL", "failed_attempts": ["Restarting pods alone - pool refilled and exhausted again within 3 minutes"],
+    "time_to_resolve_min": 22, "engineer": "priya",
+    "lesson": "Any deploy that changes worker count must include a DB pool-size review.",
+    "tags": ["database", "connection-pool", "postgres", "deploy-related", "502"]
+  },
+  {
+    "id": "INC-031", "date": "2025-06-02", "severity": "SEV-2", "service": "payment-service",
+    "title": "Connection pool exhaustion again after v2.40",
+    "symptoms": "Same 'PaymentService 5xx rate > 5%' alert. 502/504 on /checkout and /refund. Postgres log: 'too many connections for role payments_app'.",
+    "root_cause": "v2.40 raised worker count to 12 per pod; DB_POOL_MAX=60 was insufficient again. Same class of failure as INC-017.",
+    "resolution_steps": ["Check pg_stat_activity connection count per role", "Set DB_POOL_MAX=100 and enable PgBouncer in transaction mode in front of payments-db", "Rolling restart payment-service", "Confirm connections plateau below 80"],
+    "runbook": "RB-DB-POOL", "failed_attempts": ["Scaling payment-service pods from 6 to 10 - made it WORSE, more connections"],
+    "time_to_resolve_min": 15, "engineer": "arjun",
+    "lesson": "Scaling pods out during pool exhaustion increases connections; fix pooling first. Recurrence of INC-017 - add a CI check on worker_count * pool_size.",
+    "tags": ["database", "connection-pool", "postgres", "deploy-related", "recurring"]
+  },
+  {
+    "id": "INC-044", "date": "2025-07-21", "severity": "SEV-1", "service": "payment-service",
+    "title": "502s on /checkout - expired upstream TLS cert",
+    "symptoms": "Alert 'PaymentService 5xx rate > 5%'. 502 on POST /checkout. NO Postgres errors. Logs: 'x509: certificate has expired or is not yet valid' when calling psp-gateway.internal.",
+    "root_cause": "Internal TLS certificate for psp-gateway.internal expired at 00:00 UTC; cert-manager renewal had failed silently 30 days earlier.",
+    "resolution_steps": ["Verify: openssl s_client -connect psp-gateway.internal:443 | grep notAfter", "Force renewal: kubectl delete secret psp-gateway-tls -n payments (cert-manager reissues)", "Restart psp-gateway pods to load new cert", "Add alert on cert expiry < 14 days"],
+    "runbook": "RB-TLS-RENEW", "failed_attempts": ["Followed RB-DB-POOL from INC-017/INC-031 for 12 minutes - irrelevant, DB was healthy"],
+    "time_to_resolve_min": 38, "engineer": "priya",
+    "lesson": "Same alert, different root cause. Always check logs for the error string before applying the usual runbook.",
+    "tags": ["tls", "certificate", "cert-manager", "502", "upstream-dependency"]
+  },
+  {
+    "id": "INC-051", "date": "2025-08-15", "severity": "SEV-2", "service": "payment-service",
+    "title": "Pool exhaustion after autoscaler tripled pods on sale day",
+    "symptoms": "'PaymentService 5xx rate > 5%' during flash sale. Postgres: 'remaining connection slots are reserved'. HPA had scaled payment-service from 6 to 18 pods.",
+    "root_cause": "HPA scale-out tripled total connections; PgBouncer pool_size not raised to match. Third occurrence of the connection-pool class (INC-017, INC-031).",
+    "resolution_steps": ["Raise PgBouncer default_pool_size 100 -> 250 and reload", "Cap HPA maxReplicas to 12 until DB capacity is reviewed", "Verify checkout success rate > 99%"],
+    "runbook": "RB-DB-POOL", "failed_attempts": [],
+    "time_to_resolve_min": 9, "engineer": "arjun",
+    "lesson": "Connection budget must be computed from maxReplicas, not current replicas.",
+    "tags": ["database", "connection-pool", "autoscaling", "pgbouncer", "recurring"]
+  },
+  {
+    "id": "INC-009", "date": "2025-01-20", "severity": "SEV-2", "service": "auth-service",
+    "title": "Login latency p99 > 8s - Redis evictions",
+    "symptoms": "Alert 'auth-service p99 latency > 3s'. Users report slow login. Redis INFO shows evicted_keys climbing and used_memory at maxmemory (2GB).",
+    "root_cause": "New remember-me feature stored 30-day session blobs (~40KB each) in Redis without TTL, filling memory; sessions were evicted and re-created on every request.",
+    "resolution_steps": ["redis-cli INFO memory and INFO stats to confirm evictions", "Add TTL: run scripts/backfill_session_ttl.py", "Set maxmemory-policy volatile-lru", "Raise maxmemory to 6GB as buffer"],
+    "runbook": "RB-REDIS-MEM", "failed_attempts": ["Restarting auth-service pods - no effect, Redis was the bottleneck"],
+    "time_to_resolve_min": 41, "engineer": "meera",
+    "lesson": "Every new Redis key type needs an explicit TTL reviewed in code review.",
+    "tags": ["redis", "latency", "memory", "eviction", "session"]
+  },
+  {
+    "id": "INC-022", "date": "2025-04-05", "severity": "SEV-2", "service": "search-api",
+    "title": "search-api pods OOMKilled every ~40 minutes",
+    "symptoms": "Alert 'search-api restarts > 5 in 1h'. kubectl describe pod shows OOMKilled, exit code 137. Memory graph is a sawtooth climbing to the 1Gi limit.",
+    "root_cause": "Memory leak in thumbnail generation: PIL Image objects not closed in image_preview.py after upgrade to Pillow 10.",
+    "resolution_steps": ["Confirm sawtooth memory in Grafana search-api-resources", "Hotfix: wrap Image.open in a context manager in image_preview.py, deploy v1.18.1", "Temporarily raise memory limit to 2Gi as buffer during rollout"],
+    "runbook": "RB-OOM", "failed_attempts": ["Raising memory limit to 2Gi alone - only delayed the OOM to ~90 minutes"],
+    "time_to_resolve_min": 95, "engineer": "dev",
+    "lesson": "Sawtooth memory + periodic OOMKilled = leak, not undersizing. Do not just raise limits.",
+    "tags": ["kubernetes", "oomkilled", "memory-leak", "python", "pillow"]
+  },
+  {
+    "id": "INC-027", "date": "2025-05-11", "severity": "SEV-3", "service": "notification-worker",
+    "title": "Email/push notifications delayed 45 minutes",
+    "symptoms": "Alert 'kafka consumer lag notifications-topic > 100k'. Logs flooded with 'Attempt to heartbeat failed since group is rebalancing'.",
+    "root_cause": "Scaling notification-worker from 3 to 20 replicas at once triggered a rebalance storm; max.poll.interval.ms (300000) exceeded by slow batch handler, causing repeated rebalances.",
+    "resolution_steps": ["Scale workers back to 6", "Set max.poll.records=50 and increase max.poll.interval.ms to 900000", "Scale up gradually 6 -> 12 -> 20 with 5 minute gaps", "Confirm consumer lag trending down"],
+    "runbook": "RB-KAFKA-LAG", "failed_attempts": ["Restarting the Kafka brokers - unnecessary and caused a 2-minute blip for other topics"],
+    "time_to_resolve_min": 52, "engineer": "meera",
+    "lesson": "Never scale Kafka consumers by more than 2x at once.",
+    "tags": ["kafka", "consumer-lag", "rebalance", "scaling", "notifications"]
+  },
+  {
+    "id": "INC-036", "date": "2025-06-19", "severity": "SEV-1", "service": "checkout-web",
+    "title": "500s for all users - feature flag rolled to 100%",
+    "symptoms": "Alert 'checkout-web error rate > 20%'. Sentry: 'TypeError: Cannot read properties of undefined (reading total)' in NewCartSummary component.",
+    "root_cause": "Feature flag new_cart_summary was accidentally set to 100% instead of 10% in LaunchDarkly; the component crashed for carts with promo codes.",
+    "resolution_steps": ["Check recent flag changes in LaunchDarkly audit log", "Set new_cart_summary to 0%", "Verify error rate drops within 60s (no deploy needed)"],
+    "runbook": "RB-FLAG-ROLLBACK", "failed_attempts": ["Started a rollback deploy of checkout-web - 14 minutes wasted, the code was fine"],
+    "time_to_resolve_min": 18, "engineer": "dev",
+    "lesson": "If errors start with no deploy, check the feature-flag audit log FIRST.",
+    "tags": ["feature-flag", "launchdarkly", "frontend", "500", "no-deploy"]
+  },
+  {
+    "id": "INC-040", "date": "2025-07-03", "severity": "SEV-2", "service": "order-service",
+    "title": "order-service write failures - disk full",
+    "symptoms": "Alert 'order-service error rate > 5%'. Logs: 'OSError: [Errno 28] No space left on device'. Node disk at 100% on node-pool-b.",
+    "root_cause": "LOG_LEVEL=DEBUG left enabled after INC-022 investigation; 40GB of logs in 4 days filled the node's ephemeral storage.",
+    "resolution_steps": ["kubectl exec -- df -h to confirm", "Set LOG_LEVEL=INFO in ConfigMap and restart", "Truncate /var/log/pods/order-service-* on affected node", "Add disk usage alert at 80%"],
+    "runbook": "RB-DISK-FULL", "failed_attempts": [],
+    "time_to_resolve_min": 25, "engineer": "arjun",
+    "lesson": "Temporary debug settings need an expiry reminder in the incident ticket.",
+    "tags": ["disk", "logging", "kubernetes", "storage", "config"]
+  },
+  {
+    "id": "INC-013", "date": "2025-02-08", "severity": "SEV-3", "service": "api-gateway",
+    "title": "Mobile clients getting 429 Too Many Requests",
+    "symptoms": "Support tickets: mobile app shows rate limited. api-gateway metrics show 429 spike only for /v2/feed. Config diff shows rate limit 1000 rpm -> 100 rpm.",
+    "root_cause": "Rate-limit config for /v2/feed was changed from 1000 to 100 rpm by a mistyped Terraform variable in PR #812.",
+    "resolution_steps": ["Compare live Kong rate-limit plugin config with git", "Revert PR #812 and apply Terraform", "Confirm 429s drop to baseline"],
+    "runbook": "RB-GATEWAY-CONFIG", "failed_attempts": ["Restarting api-gateway pods - config is declarative, restart changed nothing"],
+    "time_to_resolve_min": 30, "engineer": "priya",
+    "lesson": "429 spikes on a single route are almost always a config change, not real traffic.",
+    "tags": ["api-gateway", "rate-limit", "429", "terraform", "config"]
+  }
+]
