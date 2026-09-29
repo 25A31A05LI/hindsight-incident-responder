@@ -2,24 +2,32 @@ import os
 from dotenv import load_dotenv
 
 load_dotenv()
-# On Streamlit Cloud, secrets live in st.secrets; mirror them into env vars
+
+# ---- Streamlit Cloud secrets (optional) ----
 try:
     import streamlit as _st
-    for _k, _v in _st.secrets.items():
-        if isinstance(_v, str) and _k not in os.environ:
-            os.environ[_k] = _v
+    _SECRETS = dict(_st.secrets)
 except Exception:
-    pass
+    _SECRETS = {}
+
+
+def _get(key: str, default: str = "") -> str:
+    """Env var first (.env / local), then Streamlit secrets (cloud)."""
+    val = os.getenv(key)
+    if val is None or val == "":
+        val = _SECRETS.get(key, default)
+    return str(val).strip()
+
 
 # ---- Hindsight ----
-HINDSIGHT_BASE_URL = os.getenv("HINDSIGHT_BASE_URL", "").strip().rstrip("/")
-HINDSIGHT_API_KEY = os.getenv("HINDSIGHT_API_KEY", "").strip() or None
-HINDSIGHT_BANK_ID = os.getenv("HINDSIGHT_BANK_ID", "incident-memory").strip()
+HINDSIGHT_BASE_URL = _get("HINDSIGHT_BASE_URL").rstrip("/")
+HINDSIGHT_API_KEY = _get("HINDSIGHT_API_KEY") or None
+HINDSIGHT_BANK_ID = _get("HINDSIGHT_BANK_ID", "incident-memory")
 
-# ---- LLM (one OpenAI-compatible client for groq / openai / gemini) ----
-LLM_PROVIDER = os.getenv("LLM_PROVIDER", "groq").strip().lower()
-LLM_API_KEY = os.getenv("LLM_API_KEY", "").strip()
-LLM_MODEL = os.getenv("LLM_MODEL", "openai/gpt-oss-120b").strip()
+# ---- LLM ----
+LLM_PROVIDER = _get("LLM_PROVIDER", "groq").lower()
+LLM_API_KEY = _get("LLM_API_KEY")
+LLM_MODEL = _get("LLM_MODEL", "openai/gpt-oss-120b")
 
 _BASE_URLS = {
     "openai": None,
@@ -29,6 +37,6 @@ _BASE_URLS = {
 LLM_BASE_URL = _BASE_URLS.get(LLM_PROVIDER)
 
 if not HINDSIGHT_BASE_URL:
-    raise RuntimeError("HINDSIGHT_BASE_URL is missing in .env")
+    raise RuntimeError("HINDSIGHT_BASE_URL is missing — set it in .env (local) or Streamlit Secrets (cloud)")
 if not LLM_API_KEY:
-    raise RuntimeError("LLM_API_KEY is missing in .env")
+    raise RuntimeError("LLM_API_KEY is missing — set it in .env (local) or Streamlit Secrets (cloud)")
