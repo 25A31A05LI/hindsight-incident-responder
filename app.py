@@ -1,6 +1,7 @@
 import json
-from pathlib import Path
 from concurrent.futures import ThreadPoolExecutor
+from pathlib import Path
+
 import streamlit as st
 import agent
 import memory
@@ -10,25 +11,83 @@ st.set_page_config(page_title="Hindsight Incident Responder", page_icon="🧠", 
 # ---------------- style ----------------
 st.markdown("""
 <style>
-.badge{display:inline-block;padding:2px 10px;border-radius:12px;font-size:0.78rem;font-weight:600;margin-right:6px}
-.sev1{background:#7f1d1d;color:#fecaca}.sev2{background:#7c2d12;color:#fed7aa}.sev3{background:#374151;color:#e5e7eb}
-.inc{background:#1e3a5f;color:#bfdbfe;font-family:monospace}
-.src{color:#9ca3af;font-size:0.78rem}
-.step{padding:8px 12px;border-left:3px solid #22c55e;background:#111827;margin:6px 0;border-radius:4px}
-.dont{padding:8px 12px;border-left:3px solid #ef4444;background:#1f1214;margin:6px 0;border-radius:4px}
-.hero{font-size:2rem;font-weight:700;margin-bottom:0}
-.sub{color:#9ca3af;margin-top:0}
+@import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=JetBrains+Mono:wght@500&display=swap');
+html, body, [class*="css"] { font-family: 'Inter', sans-serif; }
+code, pre { font-family: 'JetBrains Mono', monospace !important; }
+.block-container { padding-top.block-container { padding-top: 4.2rem; max-width: 1400px; }
+header[data-testid="stHeader"] { background: transparent; }: 1.2rem; max-width: 1400px; }
+
+.hero-wrap{
+  background: linear-gradient(135deg,#0f172a 0%,#1e1b4b 50%,#312e81 100%);
+  border:1px solid rgba(255,255,255,.08); border-radius:18px;
+  padding:26px 32px; margin:0 0 18px 0; position:relative; overflow:hidden;
+}
+.hero-wrap::after{
+  content:""; position:absolute; right:-80px; top:-80px; width:260px; height:260px;
+  background: radial-gradient(circle,#ff4b4b55 0%,transparent 70%); pointer-events:none;
+}
+.hero-title{font-size:2.1rem;font-weight:700;letter-spacing:-.02em;margin:0;color:#fff}
+.hero-sub{color:#c7d2fe;margin:6px 0 0 0;font-size:1.02rem}
+.pill{display:inline-block;margin-top:12px;margin-right:8px;padding:4px 12px;border-radius:999px;
+      font-size:.78rem;font-weight:600;background:rgba(255,255,255,.08);color:#e0e7ff;border:1px solid rgba(255,255,255,.12)}
+.pulse{width:8px;height:8px;border-radius:50%;background:#22c55e;display:inline-block;margin-right:6px;
+       box-shadow:0 0 0 0 rgba(34,197,94,.7);animation:pulse 1.8s infinite}
+@keyframes pulse{0%{box-shadow:0 0 0 0 rgba(34,197,94,.7)}70%{box-shadow:0 0 0 8px rgba(34,197,94,0)}100%{box-shadow:0 0 0 0 rgba(34,197,94,0)}}
+
+[data-testid="stMetric"]{
+  background:#161b26;border:1px solid #232a3a;border-radius:14px;padding:14px 18px;
+  transition:transform .15s ease,border-color .15s ease;
+}
+[data-testid="stMetric"]:hover{transform:translateY(-2px);border-color:#4f46e5}
+[data-testid="stMetricValue"]{font-weight:700}
+
+[data-testid="stVerticalBlockBorderWrapper"]{
+  border-radius:14px !important;border:1px solid #232a3a !important;background:#131824;
+  transition:transform .15s ease,box-shadow .15s ease,border-color .15s ease;
+}
+[data-testid="stVerticalBlockBorderWrapper"]:hover{
+  transform:translateY(-2px);border-color:#3b3f8a !important;box-shadow:0 10px 30px rgba(0,0,0,.35);
+}
+
+button[data-baseweb="tab"]{font-weight:600;font-size:.95rem;padding:10px 18px}
+button[data-baseweb="tab"][aria-selected="true"]{color:#fff}
+div[data-baseweb="tab-highlight"]{background:linear-gradient(90deg,#ff4b4b,#8b5cf6);height:3px;border-radius:3px}
+
+.stButton>button{border-radius:10px;font-weight:600;transition:all .15s ease}
+.stButton>button:hover{transform:translateY(-1px);box-shadow:0 6px 18px rgba(255,75,75,.25)}
+.stButton>button[kind="primary"]{background:linear-gradient(90deg,#ff4b4b,#e11d48);border:none}
+
+.badge{display:inline-block;padding:3px 10px;border-radius:999px;font-size:.75rem;font-weight:600;margin-right:6px;letter-spacing:.02em}
+.sev1{background:#7f1d1d;color:#fecaca;box-shadow:0 0 12px rgba(239,68,68,.35)}
+.sev2{background:#7c2d12;color:#fed7aa}
+.sev3{background:#1f2937;color:#d1d5db}
+.inc{background:#1e3a5f;color:#bfdbfe;font-family:'JetBrains Mono',monospace}
+.src{color:#9ca3af;font-size:.76rem}
+.step{padding:10px 14px;border-left:3px solid #22c55e;background:#0f1a14;margin:8px 0;border-radius:8px;
+      animation:fadeUp .35s ease both}
+.dont{padding:10px 14px;border-left:3px solid #ef4444;background:#1c1113;margin:8px 0;border-radius:8px;
+      animation:fadeUp .35s ease both}
+.step:nth-child(2){animation-delay:.05s}.step:nth-child(3){animation-delay:.1s}.step:nth-child(4){animation-delay:.15s}
+@keyframes fadeUp{from{opacity:0;transform:translateY(6px)}to{opacity:1;transform:none}}
+
+section[data-testid="stSidebar"]{background:#0b0f19;border-right:1px solid #1f2533}
+section[data-testid="stSidebar"] [data-testid="stExpander"]{border-radius:10px;border:1px solid #1f2533;margin-bottom:6px}
+
+[data-testid="stChatMessage"]{border-radius:14px;background:#131824;border:1px solid #232a3a}
+hr{border-color:#232a3a}
+.stAlert{border-radius:12px}
 </style>
 """, unsafe_allow_html=True)
 
+# ---------------- state & data ----------------
 ss = st.session_state
 for k, v in {"last_triage": None, "last_alert": "", "feedback": {}, "next_id": 100,
-             "pattern_q": "", "pending_incident": None, "chat": []}.items():
+             "pattern_q": "", "pending_incident": None, "chat": [], "session_incidents": []}.items():
     ss.setdefault(k, v)
 
 INCIDENTS = json.loads(Path("data/incidents.json").read_text(encoding="utf-8"))
-ss.setdefault("session_incidents", [])   # incidents retained during this session
-TYPICAL_UNASSISTED_MTTR = 45              # industry-typical MTTR for a SEV-2, labelled as assumption in UI
+SERVICES = sorted({i["service"] for i in INCIDENTS})
+TYPICAL_UNASSISTED_MTTR = 45   # industry-typical MTTR for a SEV-2; labelled as an assumption in the UI
 
 
 def all_incidents():
@@ -46,7 +105,7 @@ def time_saved_line(plan: dict) -> str:
     return (f"⏱️ **Past matches resolved in ~{avg} min** on average "
             f"(first time this class occurred: {first} min · typical unassisted MTTR ≈ {TYPICAL_UNASSISTED_MTTR} min, assumed). "
             f"Following the proven fix saves an estimated **{saved} min**.")
-SERVICES = sorted({i["service"] for i in INCIDENTS})
+
 
 PAGES = [
     {"sev": "SEV-2", "service": "payment-service", "title": "5xx rate 11% on /checkout after deploy v2.52",
@@ -76,9 +135,17 @@ def sev_cls(sev):
 
 
 # ---------------- header ----------------
-st.markdown('<p class="hero">🧠 Hindsight Incident Responder</p>', unsafe_allow_html=True)
-st.markdown('<p class="sub">An on-call agent that remembers every incident your team ever had — '
-            'what caused it, what fixed it, and what wasted time.</p>', unsafe_allow_html=True)
+st.markdown(f"""
+<div class="hero-wrap">
+  <p class="hero-title">🧠 Hindsight Incident Responder</p>
+  <p class="hero-sub">An on-call agent that remembers every incident your team ever had —
+  what caused it, what fixed it, and what wasted time.</p>
+  <span class="pill"><span class="pulse"></span>memory online · bank <code>{memory.BANK}</code></span>
+  <span class="pill">retain · recall · reflect</span>
+  <span class="pill">{len(all_incidents())} incidents · {len(SERVICES)} services</span>
+</div>
+""", unsafe_allow_html=True)
+
 m1, m2, m3, m4 = st.columns(4)
 m1.metric("Incidents in memory", len(all_incidents()))
 m2.metric("Services covered", len(SERVICES))
@@ -165,7 +232,8 @@ with tab_pager:
         with cols[i % 3]:
             with st.container(border=True):
                 st.markdown(badge(p["sev"], sev_cls(p["sev"])) + badge(p["service"], "sev3"), unsafe_allow_html=True)
-                st.markdown(f"**{p['title']}**")
+                st.markdown(f"<div style='font-weight:600;font-size:1rem;margin:6px 0 10px 0;line-height:1.3'>{p['title']}</div>"
+                            f"<div class='src'>🔔 paged just now · {p['service']}</div>", unsafe_allow_html=True)
                 if st.button("Acknowledge & triage", key=f"page_{i}", use_container_width=True):
                     run_triage(p["alert"])
 
@@ -189,7 +257,7 @@ with tab_pager:
             render_plan(ss.last_triage["with"]["plan"], ss.last_triage["with"]["memories"],
                         "🧠 With Hindsight memory", "green")
 
-        # ---- follow-up chat with the agent ----
+        # ---- follow-up chat ----
         st.markdown("#### 💬 Ask the agent about this plan")
         for h in ss.chat:
             with st.chat_message(h["role"]):
@@ -301,18 +369,18 @@ with tab_bank:
     st.caption("Each incident is retained as two focused memories (diagnosis + resolution) with metadata and a timestamp; "
                "Hindsight extracts facts and entities from them for recall.")
     per_service = {}
-    for i in INCIDENTS:
+    for i in all_incidents():
         per_service[i["service"]] = per_service.get(i["service"], 0) + 1
     c1, c2 = st.columns([1, 2])
     with c1:
         st.markdown("**Incidents per service**")
         st.bar_chart(per_service)
     with c2:
-        st.markdown("**Seeded incident history**")
+        st.markdown("**Incident history**")
         st.dataframe(
             [{"ID": i["id"], "Date": i["date"], "Sev": i["severity"], "Service": i["service"],
               "Title": i["title"], "Runbook": i.get("runbook", ""), "TTR (min)": i.get("time_to_resolve_min", "")}
-             for i in sorted(INCIDENTS, key=lambda x: x["date"])],
+             for i in sorted(all_incidents(), key=lambda x: x["date"])],
             use_container_width=True, hide_index=True, height=420)
     with st.expander("How one incident becomes memories (memory.py → incident_to_memories)"):
         sample = memory.incident_to_memories(INCIDENTS[0])
