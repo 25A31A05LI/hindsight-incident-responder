@@ -2,6 +2,14 @@ import os
 from dotenv import load_dotenv
 
 load_dotenv()
+# On Streamlit Cloud, secrets live in st.secrets; mirror them into env vars
+try:
+    import streamlit as _st
+    for _k, _v in _st.secrets.items():
+        if isinstance(_v, str) and _k not in os.environ:
+            os.environ[_k] = _v
+except Exception:
+    pass
 
 # ---- Hindsight ----
 HINDSIGHT_BASE_URL = os.getenv("HINDSIGHT_BASE_URL", "").strip().rstrip("/")
