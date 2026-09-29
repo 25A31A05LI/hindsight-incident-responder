@@ -14,8 +14,8 @@ st.markdown("""
 @import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=JetBrains+Mono:wght@500&display=swap');
 html, body, [class*="css"] { font-family: 'Inter', sans-serif; }
 code, pre { font-family: 'JetBrains Mono', monospace !important; }
-.block-container { padding-top.block-container { padding-top: 4.2rem; max-width: 1400px; }
-header[data-testid="stHeader"] { background: transparent; }: 1.2rem; max-width: 1400px; }
+.block-container { padding-top: 4.2rem; max-width: 1400px; }
+header[data-testid="stHeader"] { background: transparent; }
 
 .hero-wrap{
   background: linear-gradient(135deg,#0f172a 0%,#1e1b4b 50%,#312e81 100%);
@@ -102,8 +102,8 @@ def time_saved_line(plan: dict) -> str:
         return ""
     avg, first = round(sum(ttrs) / len(ttrs)), max(ttrs)
     saved = max(TYPICAL_UNASSISTED_MTTR - avg, 0)
-    return (f"⏱️ **Past matches resolved in ~{avg} min** on average "
-            f"(first time this class occurred: {first} min · typical unassisted MTTR ≈ {TYPICAL_UNASSISTED_MTTR} min, assumed). "
+    return (f"⏱️ **Similar problems were fixed in ~{avg} min** on average "
+            f"(the first time it happened took {first} min · a typical fix without history ≈ {TYPICAL_UNASSISTED_MTTR} min, assumed). "
             f"Following the proven fix saves an estimated **{saved} min**.")
 
 
@@ -147,7 +147,7 @@ st.markdown(f"""
 """, unsafe_allow_html=True)
 
 m1, m2, m3, m4 = st.columns(4)
-m1.metric("Incidents in memory", len(all_incidents()))
+m1.metric("Incidents remembered", len(all_incidents()))
 m2.metric("Services covered", len(SERVICES))
 m3.metric("Memory calls this session", len(memory.TRACE))
 m4.metric("Memory bank", memory.BANK)
@@ -155,11 +155,11 @@ m4.metric("Memory bank", memory.BANK)
 # ---------------- sidebar ----------------
 with st.sidebar:
     st.subheader("Settings")
-    compare = st.toggle("Compare: Amnesia vs Hindsight", value=True)
+    compare = st.toggle("Show side-by-side: with vs without memory", value=True)
     st.divider()
-    st.subheader("Memory trace (live)")
-    st.caption("Every retain / recall / reflect against Hindsight, as it happens.")
-    if st.button("Clear trace"):
+    st.subheader("What the memory is doing (live)")
+    st.caption("Every retain / recall / reflect call to Hindsight, as it happens.")
+    if st.button("Clear"):
         memory.TRACE.clear()
     for t in list(memory.TRACE)[:12]:
         icon = {"retain": "💾", "recall": "🔍", "reflect": "🧩"}.get(t["op"], "•")
@@ -167,7 +167,7 @@ with st.sidebar:
             st.json({"payload": t["payload"], "result": t["result"]})
 
 tab_pager, tab_resolve, tab_insights, tab_bank = st.tabs(
-    ["📟 Pager & Triage", "✅ Resolve & Learn", "📈 Team Insights", "🗂️ Memory Bank"])
+    ["🚨 Live Alerts", "✅ Save What Happened", "📈 Patterns Over Time", "🗂️ What It Remembers"])
 
 
 # ---------------- plan renderer ----------------
@@ -179,31 +179,31 @@ def render_plan(plan: dict, mems: list, title: str, accent: str):
             return
         conf = plan.get("confidence", "?")
         (st.success if accent == "green" else st.info)(
-            f"**Diagnosis** · confidence {conf}%\n\n{plan.get('diagnosis', '')}")
+            f"**What's most likely wrong** · {conf}% sure\n\n{plan.get('diagnosis', '')}")
         if accent == "green":
             line = time_saved_line(plan)
             if line:
                 st.markdown(line)
         if plan.get("matched_incidents"):
-            st.markdown("**Matched past incidents**")
+            st.markdown("**Similar problems we've had before**")
             for m in plan["matched_incidents"]:
                 st.markdown(f"{badge(m.get('id'), 'inc')} {m.get('why')}", unsafe_allow_html=True)
         else:
-            st.caption("No past incidents available — answering from general knowledge only.")
-        st.markdown("**Fix plan** <span class='src'>(ranked by what worked before)</span>", unsafe_allow_html=True)
+            st.caption("No history available — this is generic advice only.")
+        st.markdown("**What to do, in order** <span class='src'>(proven fixes first)</span>", unsafe_allow_html=True)
         for i, s in enumerate(plan.get("fix_steps", []), 1):
             st.markdown(f"<div class='step'><b>{i}.</b> {s.get('step')}<br>"
                         f"<span class='src'>source: {s.get('source')} · ~{s.get('expected_min', '?')} min</span></div>",
                         unsafe_allow_html=True)
         if plan.get("do_not_try"):
-            st.markdown("**⛔ Don't bother trying**")
+            st.markdown("**⛔ Already tried before — didn't work**")
             for d in plan["do_not_try"]:
                 st.markdown(f"<div class='dont'><s>{d.get('action')}</s><br><span class='src'>{d.get('reason')}</span></div>",
                             unsafe_allow_html=True)
         if plan.get("escalate_if"):
-            st.warning(f"**Escalate if:** {plan['escalate_if']}")
+            st.warning(f"**Call a senior engineer if:** {plan['escalate_if']}")
         if mems:
-            with st.expander(f"🔍 {len(mems)} memories recalled from Hindsight"):
+            with st.expander(f"🔍 {len(mems)} past records Hindsight found"):
                 for m in mems:
                     st.code(m["text"])
 
@@ -212,7 +212,7 @@ def run_triage(alert_text: str):
     ss.last_alert = alert_text
     ss.feedback, ss.chat = {}, []
     try:
-        with st.spinner("Recalling similar incidents from Hindsight and building both plans in parallel..."):
+        with st.spinner("Searching Hindsight for similar past problems and building both answers..."):
             with ThreadPoolExecutor(max_workers=2) as ex:
                 f_with = ex.submit(agent.triage, alert_text, True)
                 f_without = ex.submit(agent.triage, alert_text, False) if compare else None
@@ -220,45 +220,45 @@ def run_triage(alert_text: str):
                 without = f_without.result() if f_without else None
         ss.last_triage = {"with": with_mem, "without": without}
     except Exception as e:
-        st.error(f"Triage failed: {e}")
+        st.error(f"Investigation failed: {e}")
 
 
-# ---------------- PAGER & TRIAGE ----------------
+# ---------------- LIVE ALERTS ----------------
 with tab_pager:
-    st.markdown("#### 📟 Incoming pages")
-    st.caption("Simulated alert feed. Acknowledge a page to triage it — or paste your own below.")
+    st.markdown("#### 🚨 Alerts coming in right now")
+    st.caption("Simulated alert feed. Click an alert to investigate it — or paste your own below.")
     cols = st.columns(3)
     for i, p in enumerate(PAGES):
         with cols[i % 3]:
             with st.container(border=True):
                 st.markdown(badge(p["sev"], sev_cls(p["sev"])) + badge(p["service"], "sev3"), unsafe_allow_html=True)
                 st.markdown(f"<div style='font-weight:600;font-size:1rem;margin:6px 0 10px 0;line-height:1.3'>{p['title']}</div>"
-                            f"<div class='src'>🔔 paged just now · {p['service']}</div>", unsafe_allow_html=True)
-                if st.button("Acknowledge & triage", key=f"page_{i}", use_container_width=True):
+                            f"<div class='src'>🔔 just now · {p['service']}</div>", unsafe_allow_html=True)
+                if st.button("Investigate this alert", key=f"page_{i}", use_container_width=True):
                     run_triage(p["alert"])
 
-    with st.expander("✍️ Paste a custom alert / log snippet"):
+    with st.expander("✍️ Paste your own alert or error log"):
         custom = st.text_area("Alert", value=ss.last_alert, height=120, label_visibility="collapsed")
-        if st.button("🔎 Triage custom alert", type="primary", disabled=not custom.strip()):
+        if st.button("🔎 Investigate my alert", type="primary", disabled=not custom.strip()):
             run_triage(custom)
 
     if ss.last_triage:
         st.divider()
-        st.markdown("#### 🚨 Active incident")
+        st.markdown("#### 🔎 Alert being investigated")
         st.code(ss.last_alert)
         if ss.last_triage["without"]:
             c1, c2 = st.columns(2)
             with c1:
-                render_plan(ss.last_triage["without"]["plan"], [], "🙈 Same LLM, no memory", "grey")
+                render_plan(ss.last_triage["without"]["plan"], [], "🙈 AI without memory (generic advice)", "grey")
             with c2:
                 render_plan(ss.last_triage["with"]["plan"], ss.last_triage["with"]["memories"],
-                            "🧠 Same LLM + Hindsight memory", "green")
+                            "🧠 AI with Hindsight memory (learned from the past)", "green")
         else:
             render_plan(ss.last_triage["with"]["plan"], ss.last_triage["with"]["memories"],
-                        "🧠 With Hindsight memory", "green")
+                        "🧠 AI with Hindsight memory", "green")
 
         # ---- follow-up chat ----
-        st.markdown("#### 💬 Ask the agent about this plan")
+        st.markdown("#### 💬 Ask a follow-up question")
         for h in ss.chat:
             with st.chat_message(h["role"]):
                 st.markdown(h["content"])
@@ -278,29 +278,29 @@ with tab_pager:
             ss.chat.append({"role": "assistant", "content": ans})
 
         st.divider()
-        st.markdown("#### ✔️ Outcome — which steps did you actually try?")
-        st.caption("This feedback becomes part of the incident's memory.")
+        st.markdown("#### ✔️ After fixing it: which steps did you try?")
+        st.caption("Your answers become part of this incident's memory.")
         for i, s in enumerate(ss.last_triage["with"]["plan"].get("fix_steps", [])):
             ss.feedback[i] = st.radio(s.get("step", f"step {i}"), ["not tried", "worked", "failed"],
                                       horizontal=True, key=f"fb_{i}")
-        st.info("Next → **Resolve & Learn** to record the post-mortem so the agent remembers this one.")
+        st.info("Next → **Save What Happened**, so the agent remembers this one next time.")
 
-# ---------------- RESOLVE ----------------
+# ---------------- SAVE WHAT HAPPENED ----------------
 with tab_resolve:
-    st.markdown("#### ✅ Close the loop")
-    st.caption("Write what really happened. The agent structures it, you review it, and only then is it "
-               "retained into Hindsight — memory is permanent, so nothing enters it unreviewed.")
-    template = "What we found:\n\nWhat fixed it:\n\nWhat we tried that failed:\n"
-    pm_text = st.text_area("Post-mortem", value=template, height=200)
+    st.markdown("#### ✅ Tell the agent how it ended")
+    st.caption("Write what really happened in plain words. The agent turns it into a record, you check it, "
+               "and only then is it saved to Hindsight — memory is permanent, so nothing is saved unchecked.")
+    template = "What was actually wrong:\n\nWhat fixed it:\n\nWhat we tried that did NOT work:\n"
+    pm_text = st.text_area("Your notes", value=template, height=200)
 
     def _has_content(txt: str) -> bool:
-        for label in ("What we found:", "What fixed it:", "What we tried that failed:", "Alert:"):
+        for label in ("What was actually wrong:", "What fixed it:", "What we tried that did NOT work:", "Alert:"):
             txt = txt.replace(label, "")
         return len(txt.strip()) >= 40
 
-    if st.button("🧾 Structure post-mortem", type="primary", disabled=not pm_text.strip()):
+    if st.button("🧾 Turn my notes into a record", type="primary", disabled=not pm_text.strip()):
         if not _has_content(pm_text):
-            st.error("Describe what happened first (at least what fixed it). Empty templates are not saved.")
+            st.error("Please describe what happened first (at least what fixed it). Empty templates are not saved.")
         else:
             fb = []
             if ss.last_triage:
@@ -308,41 +308,42 @@ with tab_resolve:
                 fb = [{"step": steps[i]["step"], "result": r} for i, r in ss.feedback.items()
                       if i < len(steps) and r != "not tried"]
             try:
-                with st.spinner("Structuring post-mortem..."):
+                with st.spinner("Reading your notes..."):
                     ss.pending_incident = agent.structure_postmortem(
                         pm_text, fb, alert=ss.last_alert, next_id=f"INC-{ss.next_id}")
             except Exception as e:
-                st.error(f"Structuring failed: {e}")
+                st.error(f"Could not read the notes: {e}")
 
     if ss.pending_incident:
         inc = ss.pending_incident
+        st.markdown("**Check this record. If anything is wrong, edit your notes above and try again.**")
         with st.container(border=True):
             st.markdown(badge(inc.get("id"), "inc") + badge(inc.get("severity", ""), sev_cls(inc.get("severity", "")))
                         + badge(inc.get("service", ""), "sev3") + f" **{inc.get('title', '')}**", unsafe_allow_html=True)
-            st.markdown(f"**Root cause:** {inc.get('root_cause') or '—'}")
-            st.markdown("**Resolution steps:** " + (" → ".join(inc.get("resolution_steps") or []) or "—"))
-            st.markdown("**Failed attempts:** " + ("; ".join(inc.get("failed_attempts") or []) or "none"))
+            st.markdown(f"**What was wrong:** {inc.get('root_cause') or '—'}")
+            st.markdown("**What fixed it:** " + (" → ".join(inc.get("resolution_steps") or []) or "—"))
+            st.markdown("**What did NOT work:** " + ("; ".join(inc.get("failed_attempts") or []) or "none"))
             st.markdown(f"**Lesson:** {inc.get('lesson') or '—'}")
-            with st.expander("Full JSON"):
+            with st.expander("Full record (JSON)"):
                 st.json(inc)
         c1, c2 = st.columns(2)
-        if c1.button("💾 Confirm & retain to Hindsight", type="primary"):
+        if c1.button("💾 Save to memory", type="primary"):
             try:
-                with st.spinner("Retaining into Hindsight..."):
+                with st.spinner("Saving to Hindsight..."):
                     memory.retain_incident(inc)
                 ss.next_id += 1
                 ss.session_incidents.append(inc)
-                st.success(f"Retained {inc['id']}. Re-run the same page in Pager & Triage — the agent now cites it.")
+                st.success(f"Saved {inc['id']}. Investigate the same alert again in Live Alerts — the agent now uses it.")
                 ss.pending_incident = None
             except Exception as e:
-                st.error(f"Retain failed: {e}")
+                st.error(f"Save failed: {e}")
         if c2.button("Discard"):
             ss.pending_incident = None
 
-# ---------------- INSIGHTS ----------------
+# ---------------- PATTERNS OVER TIME ----------------
 with tab_insights:
-    st.markdown("#### 📈 What has the team learned?")
-    st.caption("Answered by Hindsight reflect — reasoning across every incident in memory, not a single lookup.")
+    st.markdown("#### 📈 What patterns has the team's history shown?")
+    st.caption("Hindsight looks across every past incident to answer — not just one lookup.")
     questions = [
         "Why does payment-service keep going down? What is the recurring pattern?",
         "Which runbook has the best track record and which one gets misapplied?",
@@ -354,20 +355,20 @@ with tab_insights:
         if qcols[i % 2].button(q, use_container_width=True):
             ss.pattern_q = q
     q = st.text_input("Or ask your own question", value=ss.pattern_q)
-    if st.button("🧩 Reflect", type="primary", disabled=not q.strip()):
+    if st.button("🧩 Find patterns", type="primary", disabled=not q.strip()):
         try:
-            with st.spinner("Hindsight is reflecting over all incidents..."):
+            with st.spinner("Hindsight is thinking across all incidents..."):
                 ans = agent.patterns(q)
             with st.container(border=True):
                 st.markdown(ans)
         except Exception as e:
-            st.error(f"Reflect failed: {e}")
+            st.error(f"Could not find patterns: {e}")
 
-# ---------------- MEMORY BANK ----------------
+# ---------------- WHAT IT REMEMBERS ----------------
 with tab_bank:
-    st.markdown(f"#### 🗂️ What lives in Hindsight bank `{memory.BANK}`")
-    st.caption("Each incident is retained as two focused memories (diagnosis + resolution) with metadata and a timestamp; "
-               "Hindsight extracts facts and entities from them for recall.")
+    st.markdown(f"#### 🗂️ Everything the agent remembers (Hindsight bank `{memory.BANK}`)")
+    st.caption("Each incident is saved as two focused memories (what was wrong + what fixed it) with details and a date; "
+               "Hindsight pulls out the key facts so they can be found later.")
     per_service = {}
     for i in all_incidents():
         per_service[i["service"]] = per_service.get(i["service"], 0) + 1
@@ -379,7 +380,7 @@ with tab_bank:
         st.markdown("**Incident history**")
         st.dataframe(
             [{"ID": i["id"], "Date": i["date"], "Sev": i["severity"], "Service": i["service"],
-              "Title": i["title"], "Runbook": i.get("runbook", ""), "TTR (min)": i.get("time_to_resolve_min", "")}
+              "Title": i["title"], "Runbook": i.get("runbook", ""), "Time to fix (min)": i.get("time_to_resolve_min", "")}
              for i in sorted(all_incidents(), key=lambda x: x["date"])],
             use_container_width=True, hide_index=True, height=420)
     with st.expander("How one incident becomes memories (memory.py → incident_to_memories)"):
