@@ -10,6 +10,7 @@ ss.setdefault("last_alert", "")
 ss.setdefault("feedback", {})
 ss.setdefault("next_id", 100)
 ss.setdefault("pattern_q", "")
+ss.setdefault("pending_incident", None)
 
 EXAMPLE_ALERTS = {
     "Payment 502s (recurring)":
@@ -111,26 +112,48 @@ with tab_triage:
 # ---------------- RESOLVE ----------------
 with tab_resolve:
     st.subheader("Record what actually happened")
-    st.caption("Free text is fine — the agent structures it and retains it into Hindsight.")
-    default = ""
-    if ss.last_triage:
-        default = f"Alert: {ss.last_alert}\n\nWhat we found:\n\nWhat fixed it:\n\nWhat we tried that failed:\n"
-    pm_text = st.text_area("Post-mortem", value=default, height=220)
-    if st.button("💾 Retain to memory", type="primary", disabled=not pm_text.strip()):
-        fb = []
-        if ss.last_triage:
-            steps = ss.last_triage["with"]["plan"].get("fix_steps", [])
-            fb = [{"step": steps[i]["step"], "result": r} for i, r in ss.feedback.items()
-                  if i < len(steps) and r != "not tried"]
-        try:
-            with st.spinner("Structuring post-mortem and retaining into Hindsight..."):
-                inc = agent.resolve(pm_text, fb, alert=ss.last_alert, next_id=f"INC-{ss.next_id}")
-            ss.next_id += 1
-            st.success(f"Retained {inc.get('id')} — {inc.get('title')}. "
-                       f"Re-run the same alert in Triage to see the agent use it.")
-            st.json(inc)
-        except Exception as e:
-            st.error(f"Retain failed: {e}")
+    st.caption("Free text is fine. The agent structures it, shows you the result, and saves it into Hindsight "
+               "only after you confirm. Memory is permanent: a wrong memory means wrong advice forever.")
+    template = "What we found:\n\nWhat fixed it:\n\nWhat we tried that failed:\n"
+    pm_text = st.text_area("Post-mortem", value=template, height=220)
+
+    def _has_content(txt: str) -> bool:
+        for label in ("What we found:", "What fixed it:", "What we tried that failed:", "Alert:"):
+            txt = txt.replace(label, "")
+        return len(txt.strip()) >= 40
+
+    if st.button("🧾 Structure post-mortem", type="primary", disabled=not pm_text.strip()):
+        if not _has_content(pm_text):
+            st.error("Please describe what happened first (at least what fixed it). Empty templates are not saved.")
+        else:
+            fb = []
+            if ss.last_triage:
+                steps = ss.last_triage["with"]["plan"].get("fix_steps", [])
+                fb = [{"step": steps[i]["step"], "result": r} for i, r in ss.feedback.items()
+                      if i < len(steps) and r != "not tried"]
+            try:
+                with st.spinner("Structuring post-mortem..."):
+                    ss.pending_incident = agent.structure_postmortem(
+                        pm_text, fb, alert=ss.last_alert, next_id=f"INC-{ss.next_id}")
+            except Exception as e:
+                st.error(f"Structuring failed: {e}")
+
+    if ss.pending_incident:
+        st.markdown("**Review before saving.** If anything is wrong, edit the text above and click Structure again.")
+        st.json(ss.pending_incident)
+        c1, c2 = st.columns(2)
+        if c1.button("💾 Confirm & retain to Hindsight", type="primary"):
+            try:
+                with st.spinner("Retaining into Hindsight..."):
+                    memory.retain_incident(ss.pending_incident)
+                ss.next_id += 1
+                st.success(f"Retained {ss.pending_incident['id']} — {ss.pending_incident['title']}. "
+                           f"Re-run the same alert in Triage to see the agent use it.")
+                ss.pending_incident = None
+            except Exception as e:
+                st.error(f"Retain failed: {e}")
+        if c2.button("Discard"):
+            ss.pending_incident = None
 
 # ---------------- PATTERNS ----------------
 with tab_patterns:

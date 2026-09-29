@@ -24,16 +24,19 @@ def chat(system: str, user: str, json_mode: bool = False, temperature: float = 0
 
 
 def chat_json(system: str, user: str) -> dict:
-    """Ask for JSON and parse it defensively (handles ```json fences and stray prose)."""
+    """Ask for JSON and parse it defensively."""
     raw = chat(system, user, json_mode=True)
-    cleaned = re.sub(r"^```(?:json)?\s*|\s*```$", "", raw.strip(), flags=re.MULTILINE).strip()
-    try:
-        return json.loads(cleaned)
-    except json.JSONDecodeError:
-        m = re.search(r"\{.*\}", cleaned, re.DOTALL)
-        if m:
-            try:
-                return json.loads(m.group(0))
-            except json.JSONDecodeError:
-                pass
+    candidates = [raw.strip()]
+    cleaned = re.sub(r"```(?:json)?", "", raw).strip()
+    candidates.append(cleaned)
+    m = re.search(r"\{.*\}", cleaned, re.DOTALL)
+    if m:
+        candidates.append(m.group(0))
+    for c in candidates:
+        try:
+            obj = json.loads(c)
+            if isinstance(obj, dict):
+                return obj
+        except json.JSONDecodeError:
+            continue
     return {"error": "LLM returned non-JSON", "raw": raw}

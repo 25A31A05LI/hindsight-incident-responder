@@ -108,5 +108,137 @@
     "time_to_resolve_min": 30, "engineer": "priya",
     "lesson": "429 spikes on a single route are almost always a config change, not real traffic.",
     "tags": ["api-gateway", "rate-limit", "429", "terraform", "config"]
+  },
+    {
+    "id": "INC-003", "date": "2025-01-06", "severity": "SEV-2", "service": "auth-service",
+    "title": "All logins failing after identity-provider key rotation",
+    "symptoms": "Alert 'auth-service 401 rate > 30%'. Logs: 'JWSError: key with kid=2025-01 not found in JWKS cache'. Users cannot log in on web or mobile.",
+    "root_cause": "The identity provider rotated its JWT signing key; auth-service caches the JWKS document for 24h and kept validating against the old key set.",
+    "resolution_steps": ["Confirm new kid in https://idp.internal/.well-known/jwks.json", "Force refresh: curl -X POST http://auth-service:8080/admin/jwks/refresh", "Set JWKS_CACHE_TTL from 24h to 15m in ConfigMap", "Verify 401 rate returns to baseline"],
+    "runbook": "RB-JWKS", "failed_attempts": ["Restarting auth-service pods - they reloaded the stale JWKS from the CDN edge cache"],
+    "time_to_resolve_min": 27, "engineer": "meera",
+    "lesson": "Key rotation must trigger a JWKS refresh; a 24h cache is too long for signing keys.",
+    "tags": ["auth", "jwt", "jwks", "key-rotation", "401"]
+  },
+  {
+    "id": "INC-006", "date": "2025-01-14", "severity": "SEV-3", "service": "recommendation-api",
+    "title": "Recommendations p99 12s during Elasticsearch node replacement",
+    "symptoms": "Alert 'recommendation-api p99 > 5s'. Logs: 'ElasticsearchException: search timed out after 30000ms'. ES cluster status yellow, 140 shards relocating.",
+    "root_cause": "A node replacement in the ES cluster triggered mass shard relocation; recommendation queries competed with relocation I/O.",
+    "resolution_steps": ["Check GET _cluster/health and _cat/recovery", "Set cluster.routing.allocation.node_concurrent_recoveries=1 to throttle relocation", "Temporarily reduce recommendation result size 50 -> 20", "Restore settings after cluster is green"],
+    "runbook": "RB-ES-SLOW", "failed_attempts": ["Scaling recommendation-api from 4 to 8 pods - Elasticsearch was the bottleneck, latency unchanged"],
+    "time_to_resolve_min": 48, "engineer": "dev",
+    "lesson": "Throttle shard recovery before replacing ES nodes during business hours.",
+    "tags": ["elasticsearch", "latency", "shard-relocation", "maintenance"]
+  },
+  {
+    "id": "INC-011", "date": "2025-02-01", "severity": "SEV-1", "service": "checkout-web",
+    "title": "Blank checkout page for Safari users after webpack upgrade",
+    "symptoms": "Support tickets: blank page on iPhone/Safari. Sentry: \"SyntaxError: Unexpected token '?'\" in main.bundle.js. Chrome users unaffected.",
+    "root_cause": "PR #640 upgraded webpack and changed the build target to ES2020, shipping optional chaining unsupported by Safari 13; browserslist config was dropped.",
+    "resolution_steps": ["Reproduce in BrowserStack Safari 13", "Restore browserslist ('> 0.5%, last 2 versions, safari >= 12') and rebuild", "Deploy checkout-web v4.2.1", "Purge CloudFront distribution E1ABC (aws cloudfront create-invalidation --paths '/*')"],
+    "runbook": "RB-CDN-PURGE", "failed_attempts": ["Rolling back the deploy without purging the CDN cache - Safari users kept getting the broken bundle for 20 more minutes"],
+    "time_to_resolve_min": 55, "engineer": "priya",
+    "lesson": "Any frontend rollback must be followed by a CDN purge, or the rollback is invisible to users.",
+    "tags": ["frontend", "safari", "webpack", "cdn", "browserslist"]
+  },
+  {
+    "id": "INC-015", "date": "2025-02-22", "severity": "SEV-2", "service": "order-service",
+    "title": "Customers charged twice - gateway retry storm",
+    "symptoms": "Finance reports 212 duplicate charges. api-gateway logs: 'upstream timeout on POST /orders, retrying (attempt 3/3)'. order-service p99 spiked to 9s at the same time.",
+    "root_cause": "Kong was configured to retry POST /orders on timeout; order-service had no idempotency key, so each retry created and charged a new order.",
+    "resolution_steps": ["Set retries=0 for the /orders route in Kong", "Add Idempotency-Key header propagation and dedupe table in order-service", "Refund duplicates with scripts/refund_duplicates.py --since 2025-02-22T08:00", "Verify duplicate count is zero in orders_dupes view"],
+    "runbook": "RB-IDEMPOTENCY", "failed_attempts": ["Increasing the order-service upstream timeout from 5s to 15s - made the retry storm last longer"],
+    "time_to_resolve_min": 70, "engineer": "arjun",
+    "lesson": "Never retry non-idempotent POSTs at the gateway. Idempotency keys are not optional for payments.",
+    "tags": ["orders", "idempotency", "retries", "api-gateway", "payments"]
+  },
+  {
+    "id": "INC-019", "date": "2025-03-28", "severity": "SEV-2", "service": "auth-service",
+    "title": "Login latency again - Redis full from device-code flow",
+    "symptoms": "Alert 'auth-service p99 latency > 3s'. Redis used_memory at 6GB maxmemory, evicted_keys rising. Same shape as INC-009.",
+    "root_cause": "The new OAuth device-code flow stored polling state keys without TTL. Second occurrence of the missing-TTL class after INC-009.",
+    "resolution_steps": ["redis-cli --bigkeys to identify devicecode:* keys", "Backfill TTL: scripts/backfill_ttl.py --prefix devicecode: --ttl 900", "Add CI lint rule failing any redis SET without EX/PX", "Confirm evictions stop"],
+    "runbook": "RB-REDIS-MEM", "failed_attempts": [],
+    "time_to_resolve_min": 19, "engineer": "meera",
+    "lesson": "Code review missed the TTL again; a lint rule is more reliable than a checklist. Recurrence of INC-009.",
+    "tags": ["redis", "ttl", "latency", "recurring", "auth"]
+  },
+  {
+    "id": "INC-025", "date": "2025-04-19", "severity": "SEV-3", "service": "notification-worker",
+    "title": "SMS not delivered after Twilio credential rotation",
+    "symptoms": "Alert 'sms delivery success < 90%'. Logs: 'Twilio 401: Invalid AccountSid or Auth Token'. Email and push unaffected.",
+    "root_cause": "Twilio credentials were rotated in Vault, but notification-worker reads secrets at startup only and pods were not restarted.",
+    "resolution_steps": ["Verify new credentials with curl against the Twilio API", "kubectl rollout restart deploy/notification-worker", "Enable vault-agent secret auto-reload in the pod template", "Replay failed SMS from the dead-letter queue"],
+    "runbook": "RB-SECRET-ROTATE", "failed_attempts": ["Retrying the failed messages from the DLQ before restarting - all failed again with 401"],
+    "time_to_resolve_min": 33, "engineer": "dev",
+    "lesson": "A secret rotation is not complete until every consumer has reloaded it.",
+    "tags": ["secrets", "vault", "twilio", "sms", "401"]
+  },
+  {
+    "id": "INC-029", "date": "2025-05-24", "severity": "SEV-1", "service": "api-gateway",
+    "title": "Total outage - all upstreams unhealthy after service-mesh upgrade",
+    "symptoms": "Alert 'api-gateway 5xx > 50%'. Every response: '503 no healthy upstream'. All backend pods Running but 0/1 Ready.",
+    "root_cause": "Istio sidecar upgrade to 1.22 changed the readiness probe rewrite path; probes hit /healthz instead of /health/ready and every pod was marked unready.",
+    "resolution_steps": ["kubectl describe pod shows 'Readiness probe failed: 404'", "Roll back sidecar injector to 1.21: istioctl install --revision 1-21", "Rolling restart all namespaces to pick up the old sidecar", "Update probe paths before retrying the upgrade"],
+    "runbook": "RB-MESH-UPGRADE", "failed_attempts": ["Restarting api-gateway pods - they came back unready too, the problem was cluster-wide"],
+    "time_to_resolve_min": 24, "engineer": "arjun",
+    "lesson": "When every service is unready at once, suspect the platform layer (mesh, CNI, probes), not the services.",
+    "tags": ["istio", "service-mesh", "readiness-probe", "503", "platform"]
+  },
+  {
+    "id": "INC-033", "date": "2025-06-10", "severity": "SEV-2", "service": "search-api",
+    "title": "search-api OOMKilled - capacity, not a leak",
+    "symptoms": "Alert 'search-api restarts > 5 in 1h'. Pods OOMKilled exit 137. Memory graph is a steady climb that tracks request rate, NOT a sawtooth. Traffic doubled after a marketing campaign.",
+    "root_cause": "search-api was undersized for 2x traffic; heap was dominated by the per-pod query cache. Look-alike of INC-022 but the leak fix from v1.18.1 was already deployed.",
+    "resolution_steps": ["Compare memory graph shape with INC-022 (sawtooth = leak, traffic-correlated climb = capacity)", "Raise memory limit 1Gi -> 3Gi and scale 4 -> 8 replicas", "Cap QUERY_CACHE_MAX_ENTRIES at 5000", "Confirm memory plateaus under load"],
+    "runbook": "RB-OOM", "failed_attempts": ["Spent 40 minutes hunting for a new memory leak with heap dumps - the INC-022 fix was already in place, this was capacity"],
+    "time_to_resolve_min": 62, "engineer": "priya",
+    "lesson": "Same alert as INC-022, different cause. Read the graph shape before assuming a leak.",
+    "tags": ["kubernetes", "oomkilled", "capacity", "look-alike", "search"]
+  },
+  {
+    "id": "INC-038", "date": "2025-06-27", "severity": "SEV-2", "service": "inventory-service",
+    "title": "Stock counts wrong - serialization failures under bulk restock",
+    "symptoms": "Alert 'inventory-service error rate > 5%'. Logs flooded with 'ERROR: could not serialize access due to concurrent update'. Some SKUs show negative stock.",
+    "root_cause": "The new nightly bulk-restock job ran at SERIALIZABLE isolation and collided with checkout stock decrements; retries were exhausted and some writes were lost.",
+    "resolution_steps": ["Pause the restock CronJob: kubectl patch cronjob bulk-restock -p '{\"spec\":{\"suspend\":true}}'", "Switch the job to READ COMMITTED with SELECT ... FOR UPDATE SKIP LOCKED in batches of 500", "Backfill stock from the warehouse ledger: scripts/reconcile_stock.py", "Re-enable the job outside peak hours"],
+    "runbook": "RB-DB-CONTENTION", "failed_attempts": ["Raising the retry count from 3 to 10 - increased contention and made checkout slower"],
+    "time_to_resolve_min": 58, "engineer": "meera",
+    "lesson": "Bulk jobs that touch hot rows must use row-level locking in batches, never SERIALIZABLE over the whole table.",
+    "tags": ["postgres", "isolation", "contention", "inventory", "batch-job"]
+  },
+  {
+    "id": "INC-042", "date": "2025-07-12", "severity": "SEV-3", "service": "api-gateway",
+    "title": "429s on /v2/search - wrong Terraform workspace variable",
+    "symptoms": "Alert 'api-gateway 429 rate > 2%' on /v2/search only. Live Kong rate-limit shows 60 rpm; git says 600 rpm. Same shape as INC-013.",
+    "root_cause": "terraform apply was run from the staging workspace, whose rate_limit_per_minute variable overrode production. Second occurrence of the config-drift class after INC-013.",
+    "resolution_steps": ["Diff live Kong plugin config against git", "terraform workspace select prod && terraform apply", "Add a CI check that fails plan if workspace != target environment", "Confirm 429s return to baseline"],
+    "runbook": "RB-GATEWAY-CONFIG", "failed_attempts": [],
+    "time_to_resolve_min": 14, "engineer": "priya",
+    "lesson": "Recurrence of INC-013. Rate-limit drift on one route = config change; check git and the workspace first.",
+    "tags": ["api-gateway", "rate-limit", "429", "terraform", "recurring"]
+  },
+  {
+    "id": "INC-047", "date": "2025-07-30", "severity": "SEV-2", "service": "order-service",
+    "title": "Orders stuck in PENDING - Kafka broker disk full",
+    "symptoms": "Alert 'orders in PENDING > 15 min: 1,400'. Producer logs: 'TimeoutException: Expiring 120 record(s) for orders-events-3' and 'NotLeaderOrFollowerException'. Broker kafka-2 disk at 100%.",
+    "root_cause": "A debug topic created during INC-027 had unlimited retention and filled kafka-2's disk; partitions led by kafka-2 stopped accepting writes.",
+    "resolution_steps": ["kafka-topics --describe shows under-replicated partitions on kafka-2", "Delete the debug topic and set retention.bytes=10GB on all topics", "Restart broker kafka-2 and wait for ISR to recover", "Replay stuck orders: scripts/replay_pending_orders.py"],
+    "runbook": "RB-KAFKA-BROKER", "failed_attempts": ["Restarting order-service producers - the broker, not the client, was the problem"],
+    "time_to_resolve_min": 44, "engineer": "arjun",
+    "lesson": "Every topic needs a retention limit; temporary debug topics need an owner and an expiry.",
+    "tags": ["kafka", "disk", "retention", "orders", "broker"]
+  },
+  {
+    "id": "INC-054", "date": "2025-09-02", "severity": "SEV-1", "service": "checkout-web",
+    "title": "SSR 500s at 09:00 UTC - scheduled feature-flag rollout",
+    "symptoms": "Alert 'checkout-web error rate > 20%' starting exactly 08:58 UTC. Sentry: 'ReferenceError: window is not defined' in NewHeader during server-side render. No deploy in 14 hours.",
+    "root_cause": "LaunchDarkly scheduled rollout moved ssr_new_header from 0% to 50% at 08:58; the component accessed window at module scope, which crashes on the server.",
+    "resolution_steps": ["Check LaunchDarkly audit log for changes in the last 30 minutes (lesson from INC-036)", "Set ssr_new_header to 0%", "Guard window access with typeof window !== 'undefined' and redeploy later"],
+    "runbook": "RB-FLAG-ROLLBACK", "failed_attempts": [],
+    "time_to_resolve_min": 6, "engineer": "dev",
+    "lesson": "Applying the INC-036 lesson (flag audit log first when there is no deploy) cut resolution from 18 minutes to 6.",
+    "tags": ["feature-flag", "launchdarkly", "ssr", "no-deploy", "recurring"]
   }
 ]
